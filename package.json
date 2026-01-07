@@ -9,11 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "...",
+    "react-dom": "...",
+    "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.10"
   }
+  
 }
