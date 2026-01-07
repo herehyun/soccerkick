@@ -1,3 +1,5 @@
+// netlify/functions/data.js
+
 const SHEET_NAMES = {
   players: "players",
   matches: "matches",
@@ -68,23 +70,27 @@ const toNumOrNull = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// gid 대신 sheet name으로 CSV 추출: gviz
 async function fetchSheetCsvByName(sheetId, sheetName) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(
+    sheetName
+  )}`;
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`Failed to fetch sheet="${sheetName}": HTTP ${res.status}`);
   return await res.text();
 }
 
-export default async function handler(req) {
+exports.handler = async (event) => {
   try {
     const sheetId = process.env.SHEET_ID;
     if (!sheetId) {
-      return Response.json({ error: "Missing env var SHEET_ID" }, { status: 500 });
+      return {
+        statusCode: 500,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ error: "Missing env var SHEET_ID" }),
+      };
     }
 
-    const url = new URL(req.url);
-    const season = (url.searchParams.get("season") || "").trim(); // ex) "2026"
+    const season = (event.queryStringParameters?.season || "").trim();
 
     const [playersCsv, matchesCsv, statsCsv] = await Promise.all([
       fetchSheetCsvByName(sheetId, SHEET_NAMES.players),
@@ -111,11 +117,11 @@ export default async function handler(req) {
         season: String(m.season || "").trim(),
         type: (m.type || "LEAGUE").trim(),
         round: toNumOrNull(m.round),
-        date: (m.date || "").trim(),       // YYYY-MM-DD
-        time: (m.time || "").trim(),       // HH:MM
+        date: (m.date || "").trim(),
+        time: (m.time || "").trim(),
         opponent: (m.opponent || "").trim(),
         location: (m.location || "").trim(),
-        status: (m.status || "SCHEDULED").trim(), // SCHEDULED | DONE
+        status: (m.status || "SCHEDULED").trim(),
         scoreFor: toNumOrNull(m.score_for),
         scoreAgainst: toNumOrNull(m.score_against),
       }))
@@ -134,28 +140,29 @@ export default async function handler(req) {
       }))
       .filter((s) => s.matchId && s.playerId);
 
-    // 시즌 필터링
     const seasonMatches = season ? matches.filter((m) => m.season === season) : matches;
     const seasonMatchIdSet = new Set(seasonMatches.map((m) => m.id));
     const seasonStats = season ? playerMatchStats.filter((s) => seasonMatchIdSet.has(s.matchId)) : playerMatchStats;
 
-    return new Response(
-      JSON.stringify({
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      },
+      body: JSON.stringify({
         sheetId,
         season: season || null,
         players,
         matches: seasonMatches,
         playerMatchStats: seasonStats,
       }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
-        },
-      }
-    );
+    };
   } catch (e) {
-    return Response.json({ error: "Server error", details: String(e?.message || e) }, { status: 500 });
+    return {
+      statusCode: 500,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ error: "Server error", details: String(e?.message || e) }),
+    };
   }
-}
+};
