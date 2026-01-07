@@ -1,175 +1,65 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import Home from "./pages/Home.jsx";
+import Schedule from "./pages/Schedule.jsx";
+import Records from "./pages/Records.jsx";
+import Admin from "./pages/Admin.jsx";
+import { fetchSeasonData } from "./lib/api.js";
 
-function formatMs(v) {
-  if (typeof v !== "number" || Number.isNaN(v)) return "-";
-  return `${v.toFixed(2)} ms`;
-}
+/**
+ * 이미지 기준 공통 쉘:
+ * - 상단: TTFB_WED + 시즌 드롭다운
+ * - 본문: 라우팅 페이지(홈/일정/기록/관리)
+ * - 하단: 탭바
+ * - 전체: 모바일 고정폭 + 카드형 다크 UI
+ */
 
-function nowLocal(iso) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
-function downloadCsv(rows) {
-  const header = ["measuredAt", "url", "status", "ttfbMs"];
-  const lines = [
-    header.join(","),
-    ...rows.map((r) =>
-      [
-        JSON.stringify(r.measuredAt ?? ""),
-        JSON.stringify(r.url ?? ""),
-        String(r.status ?? ""),
-        String(r.ttfbMs ?? "")
-      ].join(",")
-    )
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `ttfb_history_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
+const DEFAULT_SEASON = "2026";
 
 export default function App() {
-  const [url, setUrl] = useState("https://example.com");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [history, setHistory] = useState([]);
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const stats = useMemo(() => {
-    const xs = history.map((h) => h.ttfbMs).filter((n) => typeof n === "number");
-    if (xs.length === 0) return null;
-    const sorted = [...xs].sort((a, b) => a - b);
-    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
-    const median =
-      sorted.length % 2 === 1
-        ? sorted[(sorted.length - 1) / 2]
-        : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const [season, setSeason] = useState(DEFAULT_SEASON);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
 
-    const p95 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
-    const min = sorted[0];
-    const max = sorted[sorted.length - 1];
-
-    return { n: xs.length, mean, median, p95, min, max };
-  }, [history]);
-
-  async function measure() {
-    setError("");
+  // 이미지처럼 "시즌 드롭다운"이 상단 우측에 고정되어야 하므로,
+  // 시즌은 App 최상단 상태로 둡니다.
+  useEffect(() => {
+    let alive = true;
     setLoading(true);
-    try {
-      const res = await fetch("/api/measure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url })
+    setErr("");
+    fetchSeasonData(season)
+      .then((d) => {
+        if (!alive) return;
+        setData(d);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setErr(String(e?.message || e));
+        setLoading(false);
       });
+    return () => {
+      alive = false;
+    };
+  }, [season]);
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status}`);
+  // 시즌 목록은 데이터에서 파생할 수도 있으나,
+  // 우선 이미지처럼 "2026 시즌"이 확실히 뜨게 기본값 유지 + 확장 가능하게 처리
+  const seasonOptions = useMemo(() => {
+    // data.matches가 있다면 그 안에서 시즌을 추출해도 됩니다.
+    // 당장은 최소 구현: 현재 시즌 + (추후 확장)
+    const set = new Set([season]);
+    if (data?.matches?.length) {
+      for (const m of data.matches) {
+        if (m.season) set.add(String(m.season));
       }
-
-      setHistory((prev) => [data, ...prev].slice(0, 50)); // 최근 50개만 보관
-    } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
     }
-  }
+    return Array.from(set).sort();
+  }, [data, season]);
 
-  function clearHistory() {
-    setHistory([]);
-  }
-
-  return (
-    <div className="page">
-      <header className="header">
-        <div>
-          <h1>TTFB_WED Dashboard (Clone)</h1>
-          <p className="sub">
-            Netlify Functions로 TTFB(헤더 수신까지)를 측정하고 기록/통계를 보여주는 대시보드
-          </p>
-        </div>
-      </header>
-
-      <section className="card">
-        <h2>Measure</h2>
-        <div className="row">
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            className="input"
-          />
-          <button className="btn" onClick={measure} disabled={loading}>
-            {loading ? "Measuring..." : "Run"}
-          </button>
-          <button className="btn secondary" onClick={() => downloadCsv(history)} disabled={history.length === 0}>
-            Export CSV
-          </button>
-          <button className="btn danger" onClick={clearHistory} disabled={history.length === 0}>
-            Clear
-          </button>
-        </div>
-        {error ? <div className="error">Error: {error}</div> : null}
-      </section>
-
-      <section className="grid">
-        <div className="card">
-          <h2>Stats</h2>
-          {stats ? (
-            <div className="stats">
-              <div><span>N</span><strong>{stats.n}</strong></div>
-              <div><span>Mean</span><strong>{formatMs(stats.mean)}</strong></div>
-              <div><span>Median</span><strong>{formatMs(stats.median)}</strong></div>
-              <div><span>P95</span><strong>{formatMs(stats.p95)}</strong></div>
-              <div><span>Min</span><strong>{formatMs(stats.min)}</strong></div>
-              <div><span>Max</span><strong>{formatMs(stats.max)}</strong></div>
-            </div>
-          ) : (
-            <p className="muted">아직 측정 데이터가 없습니다.</p>
-          )}
-        </div>
-
-        <div className="card">
-          <h2>Recent Results</h2>
-          {history.length === 0 ? (
-            <p className="muted">최근 기록이 여기에 표시됩니다.</p>
-          ) : (
-            <div className="tableWrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>URL</th>
-                    <th>Status</th>
-                    <th>TTFB</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((h, idx) => (
-                    <tr key={`${h.measuredAt}-${idx}`}>
-                      <td className="mono">{nowLocal(h.measuredAt)}</td>
-                      <td className="mono clip" title={h.url}>{h.url}</td>
-                      <td className="mono">{h.status}</td>
-                      <td className="mono">{formatMs(h.ttfbMs)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <footer className="footer">
-        <p className="muted">
-          참고: 이 구현은 “응답 헤더 수신까지” 시간을 TTFB 근사치로 사용합니다. 네트워크/리다이렉트/캐시 상태에 따라 변동됩니다.
-        </p>
-      </footer>
-    </div>
-  );
-}
+  // 로딩/에러 화면도 이미지 스타일(카드형)로 맞춥니다.
+  const body
