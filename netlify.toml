@@ -1,0 +1,16 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# 프런트에서 /api/* 로 호출하면 Netlify Functions로 라우팅
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA 라우팅(새로고침 시 404 방지)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
