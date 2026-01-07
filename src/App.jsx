@@ -62,4 +62,89 @@ export default function App() {
   }, [data, season]);
 
   // 로딩/에러 화면도 이미지 스타일(카드형)로 맞춥니다.
-  const body
+  const body = useMemo(() => {
+    if (loading) {
+      return (
+        <div className="card" style={{ marginTop: 14 }}>
+          <div className="muted">데이터 로딩 중...</div>
+        </div>
+      );
+    }
+    if (err) {
+      return (
+        <div className="card" style={{ marginTop: 14 }}>
+          <div className="errorBox">
+            <div className="errorTitle">데이터 로딩 실패</div>
+            <div className="errorMsg">{err}</div>
+            <div className="muted" style={{ marginTop: 8 }}>
+              1) 구글시트 공유(링크 공개) 2) 탭 이름(players/matches/player_stats) 3) 헤더 컬럼명 확인
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // data가 준비되면 페이지로 전달
+    return (
+      <Routes>
+        <Route path="/" element={<Home season={season} data={data} />} />
+        <Route path="/schedule" element={<Schedule season={season} data={data} />} />
+        <Route path="/records" element={<Records season={season} data={data} />} />
+        <Route path="/admin" element={<Admin season={season} data={data} sheetId={data?.sheetId} />} />
+        <Route path="*" element={<Home season={season} data={data} />} />
+      </Routes>
+    );
+  }, [loading, err, season, data]);
+
+  return (
+    <div className="appRoot">
+      <div className="appShell">
+        {/* Top Bar (이미지처럼 고정) */}
+        <header className="topBar">
+          <div className="brand" onClick={() => navigate("/")}>TTFB_WED</div>
+
+          <div className="seasonWrap">
+            <select
+              className="seasonSelect"
+              value={season}
+              onChange={(e) => setSeason(e.target.value)}
+              aria-label="season"
+            >
+              {seasonOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s} 시즌
+                </option>
+              ))}
+            </select>
+          </div>
+        </header>
+
+        {/* Main */}
+        <main className="mainArea" key={`${season}:${location.pathname}`}>
+          {body}
+        </main>
+
+        {/* Bottom Tab Bar (이미지처럼) */}
+        <nav className="bottomNav">
+          <Tab to="/" label="홈" icon="home" />
+          <Tab to="/schedule" label="일정" icon="calendar" />
+          <Tab to="/records" label="기록" icon="chart" />
+          <Tab to="/admin" label="관리" icon="settings" />
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+function Tab({ to, label, icon }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => (isActive ? "tabItem active" : "tabItem")}
+      end={to === "/"}
+    >
+      <span className={`tabIcon ${icon}`} aria-hidden="true" />
+      <span className="tabLabel">{label}</span>
+    </NavLink>
+  );
+}
