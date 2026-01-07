@@ -1,5 +1,10 @@
+const SHEET_NAMES = {
+  players: "players",
+  matches: "matches",
+  playerStats: "player_stats",
+};
+
 function csvParse(text) {
-  // 간단 CSV 파서(따옴표 포함 대응). 규모가 크면 papaparse 쓰는게 더 낫지만, 의존성 없이 최소 구현합니다.
   const rows = [];
   let row = [];
   let cell = "";
@@ -33,7 +38,6 @@ function csvParse(text) {
       }
     }
   }
-  // 마지막 라인
   if (cell.length || row.length) {
     row.push(cell);
     rows.push(row);
@@ -52,100 +56,105 @@ function csvToObjects(csvText) {
   });
 }
 
-function toBool(v) {
+const toBool = (v) => {
   const s = String(v ?? "").trim().toLowerCase();
   return s === "true" || s === "1" || s === "y" || s === "yes";
-}
-function toNumOrNull(v) {
+};
+
+const toNumOrNull = (v) => {
   const s = String(v ?? "").trim();
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
-}
+};
 
-async function fetchSheetCsv(sheetId, gid) {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+// gid 대신 sheet name으로 CSV 추출: gviz
+async function fetchSheetCsvByName(sheetId, sheetName) {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok) throw new Error(`Failed to fetch sheet gid=${gid}: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to fetch sheet="${sheetName}": HTTP ${res.status}`);
   return await res.text();
 }
 
 export default async function handler(req) {
   try {
     const sheetId = process.env.SHEET_ID;
-    const gidPlayers = process.env.GID_PLAYERS;
-    const gidMatches = process.env.GID_MATCHES;
-    const gidStats = process.env.GID_PLAYER_STATS;
-
-    if (!sheetId || !gidPlayers || !gidMatches || !gidStats) {
-      return Response.json(
-        { error: "Missing env vars: SHEET_ID / GID_PLAYERS / GID_MATCHES / GID_PLAYER_STATS" },
-        { status: 500 }
-      );
+    if (!sheetId) {
+      return Response.json({ error: "Missing env var SHEET_ID" }, { status: 500 });
     }
 
     const url = new URL(req.url);
-    const season = url.searchParams.get("season") || ""; // 비우면 전체 반환
+    const season = (url.searchParams.get("season") || "").trim(); // ex) "2026"
 
     const [playersCsv, matchesCsv, statsCsv] = await Promise.all([
-      fetchSheetCsv(sheetId, gidPlayers),
-      fetchSheetCsv(sheetId, gidMatches),
-      fetchSheetCsv(sheetId, gidStats),
+      fetchSheetCsvByName(sheetId, SHEET_NAMES.players),
+      fetchSheetCsvByName(sheetId, SHEET_NAMES.matches),
+      fetchSheetCsvByName(sheetId, SHEET_NAMES.playerStats),
     ]);
 
     const playersRaw = csvToObjects(playersCsv);
     const matchesRaw = csvToObjects(matchesCsv);
     const statsRaw = csvToObjects(statsCsv);
 
-    const players = playersRaw.map((p) => ({
-      id: p.player_id,
-      name: p.name,
-      pos: p.pos,
-      active: toBool(p.active),
-    })).filter((p) => p.id && p.name);
+    const players = playersRaw
+      .map((p) => ({
+        id: p.player_id,
+        name: p.name,
+        pos: p.pos,
+        active: toBool(p.active),
+      }))
+      .filter((p) => p.id && p.name);
 
-    const matches = matchesRaw.map((m) => ({
-      id: m.match_id,
-      season: String(m.season || "").trim(),
-      type: m.type || "LEAGUE",
-      round: toNumOrNull(m.round),
-      date: m.date,
-      time: m.time,
-      opponent: m.opponent,
-      location: m.location,
-      status: m.status || "SCHEDULED",
-      scoreFor: toNumOrNull(m.score_for),
-      scoreAgainst: toNumOrNull(m.score_against),
-    })).filter((m) => m.id && m.season && m.date && m.opponent);
+    const matches = matchesRaw
+      .map((m) => ({
+        id: m.match_id,
+        season: String(m.season || "").trim(),
+        type: (m.type || "LEAGUE").trim(),
+        round: toNumOrNull(m.round),
+        date: (m.date || "").trim(),       // YYYY-MM-DD
+        time: (m.time || "").trim(),       // HH:MM
+        opponent: (m.opponent || "").trim(),
+        location: (m.location || "").trim(),
+        status: (m.status || "SCHEDULED").trim(), // SCHEDULED | DONE
+        scoreFor: toNumOrNull(m.score_for),
+        scoreAgainst: toNumOrNull(m.score_against),
+      }))
+      .filter((m) => m.id && m.season && m.date && m.opponent);
 
-    const playerMatchStats = statsRaw.map((s) => ({
-      matchId: s.match_id,
-      playerId: s.player_id,
-      attended: toBool(s.attended),
-      goals: toNumOrNull(s.goals) ?? 0,
-      assists: toNumOrNull(s.assists) ?? 0,
-      yc: toNumOrNull(s.yc) ?? 0,
-      rc: toNumOrNull(s.rc) ?? 0,
-      cleanSheet: toBool(s.clean_sheet),
-    })).filter((s) => s.matchId && s.playerId);
+    const playerMatchStats = statsRaw
+      .map((s) => ({
+        matchId: (s.match_id || "").trim(),
+        playerId: (s.player_id || "").trim(),
+        attended: toBool(s.attended),
+        goals: toNumOrNull(s.goals) ?? 0,
+        assists: toNumOrNull(s.assists) ?? 0,
+        yc: toNumOrNull(s.yc) ?? 0,
+        rc: toNumOrNull(s.rc) ?? 0,
+        cleanSheet: toBool(s.clean_sheet),
+      }))
+      .filter((s) => s.matchId && s.playerId);
 
-    const filtered = season
-      ? {
-          season,
-          players,
-          matches: matches.filter((m) => m.season === season),
-          playerMatchStats: playerMatchStats.filter((s) => matches.find((m) => m.id === s.matchId)?.season === season),
-        }
-      : { season: null, players, matches, playerMatchStats };
+    // 시즌 필터링
+    const seasonMatches = season ? matches.filter((m) => m.season === season) : matches;
+    const seasonMatchIdSet = new Set(seasonMatches.map((m) => m.id));
+    const seasonStats = season ? playerMatchStats.filter((s) => seasonMatchIdSet.has(s.matchId)) : playerMatchStats;
 
-    return new Response(JSON.stringify(filtered), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        // 캐시(원하면 조정): 60초 캐시 + 백그라운드 재검증
-        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
-      },
-    });
+    return new Response(
+      JSON.stringify({
+        sheetId,
+        season: season || null,
+        players,
+        matches: seasonMatches,
+        playerMatchStats: seasonStats,
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+        },
+      }
+    );
   } catch (e) {
     return Response.json({ error: "Server error", details: String(e?.message || e) }, { status: 500 });
   }
